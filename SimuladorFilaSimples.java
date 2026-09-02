@@ -127,6 +127,8 @@ public class SimuladorFilaSimples {
         }
 
         System.out.println("\nNumber of losses:s " + perdas + "\n");
+        System.out.printf("Tempo global da simulacao: %.4f%n", res.tempoGlobal);
+        System.out.println("Numeros pseudoaleatorios utilizados: " + res.randomsUsados);
     }
 
     public static void main(String[] args) {
