@@ -1,8 +1,33 @@
 import java.util.*;
 
+/**
+ * M6 | Simulacao de Filas em Tandem
+ *
+ * CHEGADA -> [ Fila1 ] --PASSAGEM--> [ Fila2 ] --> SAIDA
+ *
+ * Fila1: G/G/2/3, chegadas entre 1..5, atendimento entre 4..5
+ * Fila2: G/G/1/5, atendimento entre 1..3
+ */
 public class SimuladorFilaSimples {
 
-    // MÓDULO 4
+    /**
+     * Ordem em que a proxima chegada e agendada dentro do tratamento de CHEGADA.
+     *
+     * true  (padrao) - conforme o pseudocodigo do modulo M5: o agendamento da
+     *                  proxima chegada e a LINHA 9, isto e, a ultima instrucao,
+     *                  depois do teste de capacidade.
+     * false          - agenda a proxima chegada antes do teste de capacidade.
+     *
+     * As duas variantes sao simulacoes validas; o que muda e a ordem em que os
+     * numeros pseudoaleatorios sao consumidos, e portanto os resultados.
+     * Ver comparacao no README.
+     */
+    static boolean ORDEM_PSEUDOCODIGO = true;
+
+
+    // ---------------------------------------------------------------
+    // Gerador congruente linear (reaproveitado do M4)
+    // ---------------------------------------------------------------
 
     static long mclA    = 1_664_525L;
     static long mclC    = 1_013_904_223L;
@@ -37,17 +62,22 @@ public class SimuladorFilaSimples {
         return lo + (hi - lo) * nextRandom();
     }
 
-    static final int CHEGADA = 0;
-    static final int SAIDA   = 1;
+
+    // ---------------------------------------------------------------
+    // Tipos de evento
+    // ---------------------------------------------------------------
+
+    static final int CHEGADA  = 0;
+    static final int SAIDA    = 1;
+    static final int PASSAGEM = 2;
 
     static class StopSimulationException extends RuntimeException {
     }
 
 
-    // MÓDULO 6
-
-    static final int PASSAGEM = 2;
-
+    // ---------------------------------------------------------------
+    // Fila
+    // ---------------------------------------------------------------
 
     static class Fila {
 
@@ -154,6 +184,10 @@ public class SimuladorFilaSimples {
     }
 
 
+    // ---------------------------------------------------------------
+    // Evento e escalonador
+    // ---------------------------------------------------------------
+
     static class Evento implements Comparable<Evento> {
 
         private final double tempo;
@@ -215,6 +249,10 @@ public class SimuladorFilaSimples {
     }
 
 
+    // ---------------------------------------------------------------
+    // Simulacao
+    // ---------------------------------------------------------------
+
     static Resultado simular(
             Fila fila1,
             Fila fila2,
@@ -245,6 +283,8 @@ public class SimuladorFilaSimples {
                 double delta = evtT - t;
 
 
+                // AcumulaTempo: o estado das DUAS filas permaneceu inalterado
+                // durante todo o intervalo entre o evento anterior e este.
                 fila1.acumulaTempo(delta);
                 fila2.acumulaTempo(delta);
 
@@ -254,21 +294,13 @@ public class SimuladorFilaSimples {
 
                 if (ev.tipo() == CHEGADA) {
 
-                    escalonador.adicionar(
-                            new Evento(
-                                    t + uniform(
-                                            fila1.minArrival(),
-                                            fila1.maxArrival()
-                                    ),
-                                    CHEGADA
-                            )
-                    );
-
+                    if (!ORDEM_PSEUDOCODIGO) {
+                        agendarProximaChegada(escalonador, fila1, t);
+                    }
 
                     if (fila1.status() < fila1.capacity()) {
 
                         fila1.in();
-
 
                         if (fila1.status() <= fila1.servers()) {
 
@@ -288,11 +320,16 @@ public class SimuladorFilaSimples {
                         fila1.addLoss();
                     }
 
+                    // Linha 9 do pseudocodigo.
+                    if (ORDEM_PSEUDOCODIGO) {
+                        agendarProximaChegada(escalonador, fila1, t);
+                    }
+
 
                 } else if (ev.tipo() == PASSAGEM) {
 
+                    // "saida" da fila 1
                     fila1.out();
-
 
                     if (fila1.status() >= fila1.servers()) {
 
@@ -307,11 +344,10 @@ public class SimuladorFilaSimples {
                         );
                     }
 
-
+                    // "chegada" na fila 2 (sem agendar nova chegada externa)
                     if (fila2.status() < fila2.capacity()) {
 
                         fila2.in();
-
 
                         if (fila2.status() <= fila2.servers()) {
 
@@ -336,7 +372,6 @@ public class SimuladorFilaSimples {
 
                     fila2.out();
 
-
                     if (fila2.status() >= fila2.servers()) {
 
                         escalonador.adicionar(
@@ -353,6 +388,7 @@ public class SimuladorFilaSimples {
             }
 
         } catch (StopSimulationException ignored) {
+            // fim da simulacao: esgotou a quota de numeros pseudoaleatorios
         }
 
 
@@ -368,6 +404,28 @@ public class SimuladorFilaSimples {
         return res;
     }
 
+
+    static void agendarProximaChegada(
+            Escalonador escalonador,
+            Fila fila1,
+            double t
+    ) {
+
+        escalonador.adicionar(
+                new Evento(
+                        t + uniform(
+                                fila1.minArrival(),
+                                fila1.maxArrival()
+                        ),
+                        CHEGADA
+                )
+        );
+    }
+
+
+    // ---------------------------------------------------------------
+    // Saida
+    // ---------------------------------------------------------------
 
     static void imprimirFila(
             Fila fila,
@@ -395,9 +453,7 @@ public class SimuladorFilaSimples {
 
         } else {
 
-            System.out.println(
-                    "Arrival: from Queue1"
-            );
+            System.out.println("Arrival: from Queue1");
         }
 
 
@@ -410,10 +466,11 @@ public class SimuladorFilaSimples {
 
         System.out.println("*".repeat(54));
 
-        System.out.println(
-                "  State           Time        Probability"
-        );
+        System.out.println("  State           Time        Probability");
 
+
+        double somaTempos = 0.0;
+        double somaProb   = 0.0;
 
         for (int i = 0; i <= fila.capacity(); i++) {
 
@@ -421,6 +478,8 @@ public class SimuladorFilaSimples {
                     ? (fila.times()[i] / tempoGlobal * 100)
                     : 0.0;
 
+            somaTempos += fila.times()[i];
+            somaProb   += p;
 
             System.out.printf(
                     "%7d     %10.4f         %5.2f%%%n",
@@ -431,76 +490,79 @@ public class SimuladorFilaSimples {
         }
 
 
-        System.out.println(
-                "\nNumber of losses: " + fila.loss()
+        System.out.println("\nNumber of losses: " + fila.loss());
+
+        // Validacao sugerida no material: a soma dos tempos acumulados de cada
+        // fila deve ser igual ao tempo global, e as probabilidades devem somar 100%.
+        System.out.printf(
+                "Validacao: soma dos tempos = %.4f | soma das probabilidades = %.2f%%%n",
+                somaTempos,
+                somaProb
         );
     }
 
 
     static void imprimirResultados(Resultado res) {
 
-        imprimirFila(
-                res.fila1,
-                res.tempoGlobal,
-                true
-        );
-
+        imprimirFila(res.fila1, res.tempoGlobal, true);
 
         System.out.println();
 
-
-        imprimirFila(
-                res.fila2,
-                res.tempoGlobal,
-                false
-        );
-
+        imprimirFila(res.fila2, res.tempoGlobal, false);
 
         System.out.printf(
                 "%nTempo global da simulacao: %.4f%n",
                 res.tempoGlobal
         );
 
-
         System.out.println(
-                "Numeros pseudoaleatorios utilizados: "
-                        + res.randomsUsados
+                "Numeros pseudoaleatorios utilizados: " + res.randomsUsados
         );
     }
 
 
     public static void main(String[] args) {
 
+        if (args.length > 0 && args[0].equals("--ordem-alternativa")) {
+            ORDEM_PSEUDOCODIGO = false;
+        }
+
+        System.out.println(
+                "Ordem de agendamento da chegada: "
+                        + (ORDEM_PSEUDOCODIGO
+                            ? "linha 9 (pseudocodigo do M5)"
+                            : "antes do teste de capacidade")
+        );
+        System.out.println();
+
+
         Fila fila1 = new Fila(
                 "Queue1",
-                2,
-                3,
-                1.0,
-                5.0,
-                4.0,
-                5.0
+                2,      // servidores
+                3,      // capacidade
+                1.0,    // chegada min
+                5.0,    // chegada max
+                4.0,    // atendimento min
+                5.0     // atendimento max
         );
-
 
         Fila fila2 = new Fila(
                 "Queue2",
-                1,
-                5,
+                1,      // servidores
+                5,      // capacidade
+                0.0,    // sem chegada externa
                 0.0,
-                0.0,
-                1.0,
-                3.0
+                1.0,    // atendimento min
+                3.0     // atendimento max
         );
-
 
         Resultado res = simular(
                 fila1,
                 fila2,
-                100_000,
-                12_345L,
-                1.0
+                100_000,    // numeros pseudoaleatorios
+                12_345L,    // semente
+                1.0         // primeira chegada
         );
-
 
         imprimirResultados(res);
     }
