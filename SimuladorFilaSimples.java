@@ -70,6 +70,7 @@ public class SimuladorFilaSimples {
     static final int CHEGADA  = 0;
     static final int SAIDA    = 1;
     static final int PASSAGEM = 2;
+    static final int EXTERIOR = -1;
 
     static class StopSimulationException extends RuntimeException {
     }
@@ -192,11 +193,20 @@ public class SimuladorFilaSimples {
 
         private final double tempo;
         private final int tipo;
+        private final int filaOrigem;
+        private final int filaDestino;
 
 
         Evento(double tempo, int tipo) {
+            this(tempo, tipo, EXTERIOR, EXTERIOR);
+        }
+
+
+        Evento(double tempo, int tipo, int filaOrigem, int filaDestino) {
             this.tempo = tempo;
             this.tipo = tipo;
+            this.filaOrigem = filaOrigem;
+            this.filaDestino = filaDestino;
         }
 
 
@@ -206,6 +216,14 @@ public class SimuladorFilaSimples {
 
         int tipo() {
             return tipo;
+        }
+
+        int filaOrigem() {
+            return filaOrigem;
+        }
+
+        int filaDestino() {
+            return filaDestino;
         }
 
 
@@ -261,6 +279,38 @@ public class SimuladorFilaSimples {
             double firstArrival
     ) {
 
+        // Mantem a chamada usada no codigo anterior.
+        // Fila1 -> Fila2 -> exterior, ambos com probabilidade 1.
+        ArrayList<Fila> listaDeFilas = new ArrayList<>();
+
+        listaDeFilas.add(fila1);
+        listaDeFilas.add(fila2);
+
+        double[][] probabilidadesRoteamento = {
+                {0.0, 1.0, 0.0},
+                {0.0, 0.0, 1.0}
+        };
+
+        return simular(
+                listaDeFilas,
+                probabilidadesRoteamento,
+                0,
+                maxRandoms,
+                seed,
+                firstArrival
+        );
+    }
+
+
+    static Resultado simular(
+            ArrayList<Fila> listaDeFilas,
+            double[][] probabilidadesRoteamento,
+            int filaChegadaExterna,
+            int maxRandoms,
+            long seed,
+            double firstArrival
+    ) {
+
         resetLcg(seed, maxRandoms);
 
         double t = 0.0;
@@ -268,7 +318,12 @@ public class SimuladorFilaSimples {
         Escalonador escalonador = new Escalonador();
 
         escalonador.adicionar(
-                new Evento(firstArrival, CHEGADA)
+                new Evento(
+                        firstArrival,
+                        CHEGADA,
+                        EXTERIOR,
+                        filaChegadaExterna
+                )
         );
 
 
@@ -283,10 +338,11 @@ public class SimuladorFilaSimples {
                 double delta = evtT - t;
 
 
-                // AcumulaTempo: o estado das DUAS filas permaneceu inalterado
+                // AcumulaTempo: o estado de TODAS as filas permaneceu inalterado
                 // durante todo o intervalo entre o evento anterior e este.
-                fila1.acumulaTempo(delta);
-                fila2.acumulaTempo(delta);
+                for (Fila fila : listaDeFilas) {
+                    fila.acumulaTempo(delta);
+                }
 
 
                 t = evtT;
@@ -294,94 +350,103 @@ public class SimuladorFilaSimples {
 
                 if (ev.tipo() == CHEGADA) {
 
+                    Fila filaDestino = listaDeFilas.get(ev.filaDestino());
+
                     if (!ORDEM_PSEUDOCODIGO) {
-                        agendarProximaChegada(escalonador, fila1, t);
+                        agendarProximaChegada(
+                                escalonador,
+                                filaDestino,
+                                ev.filaDestino(),
+                                t
+                        );
                     }
 
-                    if (fila1.status() < fila1.capacity()) {
+                    if (filaDestino.status() < filaDestino.capacity()) {
 
-                        fila1.in();
+                        filaDestino.in();
 
-                        if (fila1.status() <= fila1.servers()) {
+                        if (filaDestino.status() <= filaDestino.servers()) {
 
-                            escalonador.adicionar(
-                                    new Evento(
-                                            t + uniform(
-                                                    fila1.minService(),
-                                                    fila1.maxService()
-                                            ),
-                                            PASSAGEM
-                                    )
+                            agendarFimAtendimento(
+                                    escalonador,
+                                    listaDeFilas,
+                                    probabilidadesRoteamento,
+                                    ev.filaDestino(),
+                                    t
                             );
                         }
 
                     } else {
 
-                        fila1.addLoss();
+                        filaDestino.addLoss();
                     }
 
                     // Linha 9 do pseudocodigo.
                     if (ORDEM_PSEUDOCODIGO) {
-                        agendarProximaChegada(escalonador, fila1, t);
+                        agendarProximaChegada(
+                                escalonador,
+                                filaDestino,
+                                ev.filaDestino(),
+                                t
+                        );
                     }
 
 
                 } else if (ev.tipo() == PASSAGEM) {
 
-                    // "saida" da fila 1
-                    fila1.out();
+                    Fila filaOrigem = listaDeFilas.get(ev.filaOrigem());
+                    Fila filaDestino = listaDeFilas.get(ev.filaDestino());
 
-                    if (fila1.status() >= fila1.servers()) {
+                    // "saida" da fila de origem
+                    filaOrigem.out();
 
-                        escalonador.adicionar(
-                                new Evento(
-                                        t + uniform(
-                                                fila1.minService(),
-                                                fila1.maxService()
-                                        ),
-                                        PASSAGEM
-                                )
+                    if (filaOrigem.status() >= filaOrigem.servers()) {
+
+                        agendarFimAtendimento(
+                                escalonador,
+                                listaDeFilas,
+                                probabilidadesRoteamento,
+                                ev.filaOrigem(),
+                                t
                         );
                     }
 
-                    // "chegada" na fila 2 (sem agendar nova chegada externa)
-                    if (fila2.status() < fila2.capacity()) {
+                    // "chegada" na fila de destino (sem agendar nova chegada externa)
+                    if (filaDestino.status() < filaDestino.capacity()) {
 
-                        fila2.in();
+                        filaDestino.in();
 
-                        if (fila2.status() <= fila2.servers()) {
+                        if (filaDestino.status() <= filaDestino.servers()) {
 
-                            escalonador.adicionar(
-                                    new Evento(
-                                            t + uniform(
-                                                    fila2.minService(),
-                                                    fila2.maxService()
-                                            ),
-                                            SAIDA
-                                    )
+                            agendarFimAtendimento(
+                                    escalonador,
+                                    listaDeFilas,
+                                    probabilidadesRoteamento,
+                                    ev.filaDestino(),
+                                    t
                             );
                         }
 
                     } else {
 
-                        fila2.addLoss();
+                        filaDestino.addLoss();
                     }
 
 
                 } else if (ev.tipo() == SAIDA) {
 
-                    fila2.out();
+                    Fila filaOrigem = listaDeFilas.get(ev.filaOrigem());
 
-                    if (fila2.status() >= fila2.servers()) {
+                    filaOrigem.out();
 
-                        escalonador.adicionar(
-                                new Evento(
-                                        t + uniform(
-                                                fila2.minService(),
-                                                fila2.maxService()
-                                        ),
-                                        SAIDA
-                                )
+                    if (filaOrigem.status() >= filaOrigem.servers()) {
+
+                        agendarFimAtendimento(
+                                escalonador,
+                                listaDeFilas,
+                                probabilidadesRoteamento,
+                                ev.filaOrigem(),
+                                t
                         );
                     }
                 }
@@ -396,12 +461,139 @@ public class SimuladorFilaSimples {
 
         res.tempoGlobal = t;
 
-        res.fila1 = fila1;
-        res.fila2 = fila2;
+        // Mantem o Resultado anterior intacto enquanto a parte de saida
+        // ainda trabalha especificamente com fila1 e fila2.
+        if (!listaDeFilas.isEmpty()) {
+            res.fila1 = listaDeFilas.get(0);
+        }
+
+        if (listaDeFilas.size() > 1) {
+            res.fila2 = listaDeFilas.get(1);
+        }
 
         res.randomsUsados = randomsUsed();
 
         return res;
+    }
+
+
+    static void agendarFimAtendimento(
+            Escalonador escalonador,
+            ArrayList<Fila> listaDeFilas,
+            double[][] probabilidadesRoteamento,
+            int indiceFilaOrigem,
+            double t
+    ) {
+
+        Fila filaOrigem = listaDeFilas.get(indiceFilaOrigem);
+
+        double tempoDoEvento =
+                t + uniform(
+                        filaOrigem.minService(),
+                        filaOrigem.maxService()
+                );
+
+        int indiceFilaDestino = sortearDestino(
+                probabilidadesRoteamento[indiceFilaOrigem],
+                listaDeFilas.size()
+        );
+
+        if (indiceFilaDestino == EXTERIOR) {
+
+            escalonador.adicionar(
+                    new Evento(
+                            tempoDoEvento,
+                            SAIDA,
+                            indiceFilaOrigem,
+                            EXTERIOR
+                    )
+            );
+
+        } else {
+
+            escalonador.adicionar(
+                    new Evento(
+                            tempoDoEvento,
+                            PASSAGEM,
+                            indiceFilaOrigem,
+                            indiceFilaDestino
+                    )
+            );
+        }
+    }
+
+
+    static int sortearDestino(
+            double[] probabilidades,
+            int quantidadeDeFilas
+    ) {
+
+        // Se existe apenas uma rota com 100% de probabilidade, nao e necessario
+        // consumir um numero pseudoaleatorio. Isso preserva o comportamento
+        // do simulador anterior nos casos de roteamento deterministico.
+        int quantidadeDeDestinos = 0;
+        int destinoUnico = EXTERIOR;
+        double probabilidadeDestinoUnico = 0.0;
+
+        for (int i = 0; i <= quantidadeDeFilas; i++) {
+
+            if (probabilidades[i] > 0.0) {
+
+                quantidadeDeDestinos++;
+                probabilidadeDestinoUnico = probabilidades[i];
+
+                destinoUnico =
+                        (i == quantidadeDeFilas)
+                                ? EXTERIOR
+                                : i;
+            }
+        }
+
+        if (quantidadeDeDestinos == 1
+                && Math.abs(probabilidadeDestinoUnico - 1.0) < 0.0000001) {
+            return destinoUnico;
+        }
+
+
+        double sum = 0.0;
+        double prob = nextRandom();
+
+        for (int i = 0; i <= quantidadeDeFilas; i++) {
+
+            sum += probabilidades[i];
+
+            if (prob < sum) {
+
+                if (i == quantidadeDeFilas) {
+                    return EXTERIOR;
+                }
+
+                return i;
+            }
+        }
+
+        return EXTERIOR;
+    }
+
+
+    static void agendarProximaChegada(
+            Escalonador escalonador,
+            Fila fila,
+            int indiceFila,
+            double t
+    ) {
+
+        escalonador.adicionar(
+                new Evento(
+                        t + uniform(
+                                fila.minArrival(),
+                                fila.maxArrival()
+                        ),
+                        CHEGADA,
+                        EXTERIOR,
+                        indiceFila
+                )
+        );
     }
 
 
